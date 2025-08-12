@@ -28,19 +28,29 @@ logger.addHandler(handler)
 
 
 async def main():
-    from handler import get_companies
+    from handler import find_companies, get_company_info
     from parser import ParserClient
 
     parser = ParserClient()
 
-    tasks = [parser.parse_events(page) for page in range(1, 6)]
-    raw_companies = await asyncio.gather(*tasks)
-    companies = []
+    parse_tasks = [parser.parse_events(page) for page in range(1, 6)]
+    raw_pages = await asyncio.gather(*parse_tasks)
 
-    for company in raw_companies:
-        companies.append(get_companies(company))
+    find_tasks = [asyncio.to_thread(find_companies, page) for page in raw_pages]
+    incomplete_companies = await asyncio.gather(*find_tasks)
+    incomplete_companies = [company for sublist in incomplete_companies for company in sublist]
+    
+    find_info_tasks = [parser.parse_company_info(company.slug) for company in incomplete_companies]
+    info_htmls = await asyncio.gather(*find_info_tasks)
+    
+    add_info_tasks = [
+        asyncio.to_thread(get_company_info, html, company)
+            for html, company in zip(info_htmls, incomplete_companies)
+    ]
+    companies = await asyncio.gather(*add_info_tasks)
 
     print(companies)
+
 
 if __name__ == "__main__":
     try:
