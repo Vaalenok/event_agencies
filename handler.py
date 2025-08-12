@@ -13,10 +13,13 @@ def get_companies(json: dict):
                     vendor.get("name", None),
                     None,
                     None,
-                    None,
                     vendor.get("phoneNumber", None),
                     vendor.get("slug", None)
                 )
             )
 
     return result
+
+
+def get_company_info():
+    pass

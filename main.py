@@ -33,11 +33,14 @@ async def main():
 
     parser = ParserClient()
 
-    response = await parser.try_parse_events(1)
-    companies = get_companies(response)
+    tasks = [parser.parse_events(page) for page in range(1, 6)]
+    raw_companies = await asyncio.gather(*tasks)
+    companies = []
+
+    for company in raw_companies:
+        companies.append(get_companies(company))
 
     print(companies)
-
 
 if __name__ == "__main__":
     try:

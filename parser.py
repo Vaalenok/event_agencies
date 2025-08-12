@@ -2,6 +2,7 @@ import aiohttp
 import asyncio
 import certifi
 from fake_useragent import UserAgent
+from functools import wraps
 import logging
 import ssl
 from tenacity import retry, stop_after_attempt, RetryError
@@ -27,6 +28,35 @@ def get_headers(additional_headers: dict = None) -> dict:
         headers.update(additional_headers)
 
     return headers
+
+
+def handle_parse_errors(use_queue=True):
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(self, *args, **kwargs):
+            try:
+                if use_queue:
+                    return await self.queue.run_task(func, self, *args, **kwargs)
+
+                return await func(self, *args, **kwargs)
+            except RetryError as re:
+                original_exception = re.last_attempt.exception()
+
+                if original_exception is not None:
+                    original_exception = str(original_exception).strip()
+
+                if not original_exception:
+                    original_exception = "Time limit exceeded"
+
+                logging.error(f"Error parsing: {original_exception}")
+            except Exception as e:
+                logging.error(f"Error parsing: {e}")
+
+            return None
+
+        return wrapper
+
+    return decorator
 
 
 class Queue:
@@ -56,6 +86,7 @@ class ParserClient:
         self.insecure_ssl_context.check_hostname = False
         self.insecure_ssl_context.verify_mode = ssl.CERT_NONE
 
+    @handle_parse_errors()
     @retry(stop=stop_after_attempt(REQUEST_RETRIES))
     async def parse_events(self, page: int):
         async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=TIMEOUT)) as session:
@@ -66,19 +97,13 @@ class ParserClient:
             ) as response:
                 return await response.json()
 
-    async def try_parse_events(self, page: int):
-        try:
-            return await self.queue.run_task(self.parse_events, page)
-        except RetryError as re:
-            original_exception = re.last_attempt.exception()
-
-            if not original_exception is None:
-                original_exception = str(original_exception).strip()
-
-            if not original_exception:
-                original_exception = "Time limit exceeded"
-
-            logging.error(f"Error parsing events: {original_exception}")
-        except Exception as e:
-            logging.error(f"Error parsing events: {e}")
-            return None
+    @handle_parse_errors()
+    @retry(stop=stop_after_attempt(REQUEST_RETRIES))
+    async def parse_company_info(self, slug: str):
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=TIMEOUT)) as session:
+            async with session.get(
+                f"https://www.partyslate.com/vendors/{slug}",
+                headers=get_headers(),
+                ssl=self.ssl_context
+            ) as response:
+                return await response.text()
