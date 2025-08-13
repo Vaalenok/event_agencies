@@ -33,7 +33,7 @@ parser = ParserClient()
 
 
 async def main():
-    from handler import find_companies, get_company_info, get_persons_info, get_persons_links
+    from handler import find_companies, get_company_info, get_persons_info, get_persons_links, write_in_xlsx
 
     parse_tasks = [parser.parse_events(page) for page in range(1, 6)]
     raw_pages = await asyncio.gather(*parse_tasks)
@@ -59,7 +59,7 @@ async def main():
     add_person_links_tasks = [get_persons_links(company) for company in companies]
     companies = await asyncio.gather(*add_person_links_tasks)
 
-
+    write_in_xlsx(companies)
 
 
 if __name__ == "__main__":

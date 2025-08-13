@@ -1,5 +1,8 @@
 from bs4 import BeautifulSoup
 import json
+from openpyxl import Workbook
+from openpyxl.styles import PatternFill
+from openpyxl.utils import get_column_letter
 import re
 
 from models import Company, Person
@@ -158,9 +161,75 @@ async def get_persons_links(company: Company):
                 unique_phones = list(set(found_phones))
 
                 if unique_emails:
-                    person.email = unique_emails[0]
+                    email = unique_emails[0].split(".")
+
+                    if "com" in email[-1] and len(email[-1]) != 3:
+                        email[-1] = "com"
+
+                    person.email = ".".join(email)
 
                 if unique_phones:
                     person.phone_number = unique_phones[0]
 
     return company
+
+
+def write_in_xlsx(companies: list[Company]):
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Data"
+
+    ws.sheet_view.showGridLines = False
+
+    grey_fill = PatternFill(start_color="DDDDDD", end_color="DDDDDD", fill_type="solid")
+
+    headers = [
+        "Company name", "Company website", "Company instagram link", "Company facebook link", "Company phone number",
+        "Person name", "Person job title", "Person phone number", "Person email"
+    ]
+    ws.append(headers)
+
+    for col in range(1, len(headers) + 1):
+        ws.cell(row=1, column=col).fill = grey_fill
+
+    current_row = 2
+
+    for idx, company in enumerate(companies):
+        use_grey = (idx % 2 == 1)
+
+        rows_to_add = []
+
+        if company.persons:
+            for person in company.persons:
+                rows_to_add.append([
+                    company.name, company.website, company.ig_link, company.fb_link, company.phone_number,
+                    person.name, person.job_title, person.phone_number, person.email
+                ])
+        else:
+            rows_to_add.append([
+                company.name, company.website, company.ig_link, company.fb_link, company.phone_number
+            ])
+
+        for row_data in rows_to_add:
+            ws.append(row_data)
+
+            if use_grey:
+                for col in range(1, len(headers) + 1):
+                    ws.cell(row=current_row, column=col).fill = grey_fill
+
+            current_row += 1
+
+    for col in ws.columns:
+        max_length = 0
+        col_letter = col[0].column_letter
+
+        for cell in col:
+            if cell.value:
+                cell_length = len(str(cell.value))
+
+                if cell_length > max_length:
+                    max_length = cell_length
+
+        ws.column_dimensions[col_letter].width = max_length + 2
+
+    wb.save("data.xlsx")
