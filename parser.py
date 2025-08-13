@@ -63,14 +63,14 @@ class Queue:
     def __init__(self, max_concurrent_tasks: int):
         self.max_concurrent_tasks = max_concurrent_tasks
         self.semaphore = asyncio.Semaphore(self.max_concurrent_tasks)
-        self.loop = asyncio.get_running_loop()
 
     async def _worker(self, coro, *args, **kwargs):
         async with self.semaphore:
             return await coro(*args, **kwargs)
 
     def run_task(self, coro, *args, **kwargs):
-        return self.loop.create_task(self._worker(coro, *args, **kwargs))
+        loop = asyncio.get_running_loop()
+        return loop.create_task(self._worker(coro, *args, **kwargs))
 
 
 class ParserClient:
@@ -107,3 +107,15 @@ class ParserClient:
                 ssl=self.ssl_context
             ) as response:
                 return await response.text()
+
+    @handle_parse_errors()
+    @retry(stop=stop_after_attempt(REQUEST_RETRIES))
+    async def parse_website(self, url: str):
+        for _ssl in (True, False):
+            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=TIMEOUT)) as session:
+                async with session.get(
+                    url,
+                    headers=get_headers(),
+                    ssl=self.ssl_context if _ssl else self.insecure_ssl_context,
+                ) as response:
+                    return await response.text()
