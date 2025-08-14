@@ -2,7 +2,6 @@ from bs4 import BeautifulSoup
 import json
 from openpyxl import Workbook
 from openpyxl.styles import PatternFill
-from openpyxl.utils import get_column_letter
 import re
 
 from models import Company, Person
@@ -105,30 +104,45 @@ def get_persons_info(html, company: Company):
 async def get_persons_links(company: Company):
     from main import parser
 
-    pages = [company.website]
+    visited = set()
+    pages_to_visit = [company.website]
 
-    tags = ["about", "contact", "team", "us"]
+    tags = ["about", "contact", "contacts", "team", "us", "meet", "franchise", "welcome"]
 
-    website = await parser.parse_website(company.website)
+    depth = 15
 
-    if website:
-        soup = BeautifulSoup(website, "html.parser")
+    while pages_to_visit and depth:
+        current_page = pages_to_visit.pop(0)
 
-        all_links = soup.find_all("a")
+        if current_page not in visited:
+            visited.add(current_page)
 
-        for link in all_links:
-            link_text = link.get_text(strip=True).lower()
+            website = await parser.parse_website(current_page)
 
-            if any(tag in link_text for tag in tags):
-                href = link.get("href", None)
+            if website:
+                soup = BeautifulSoup(website, "html.parser")
 
-                if href:
-                    if "http" in href:
-                        pages.append(href)
-                    elif "/" in href:
-                        pages.append(company.website + href)
+                all_links = soup.find_all("a")
 
-        pages = list(set(pages))
+                for link in all_links:
+                    link_text = link.get_text(strip=True).lower()
+                    href_text = link.get("href", None)
+
+                    if any(tag in link_text for tag in tags) or any(tag in href_text for tag in tags if href_text):
+                        if href_text:
+                            if href_text.startswith("http"):
+                                new_page = href_text
+                            elif href_text.startswith("/"):
+                                new_page = company.website.rstrip("/") + href_text
+                            else:
+                                continue
+
+                            if new_page not in visited and new_page not in pages_to_visit:
+                                pages_to_visit.append(new_page)
+
+        depth -= 1
+
+    pages = list(visited)
 
     for page in pages:
         html = await parser.parse_website(page)
@@ -137,39 +151,76 @@ async def get_persons_links(company: Company):
             soup = BeautifulSoup(html, "html.parser")
             page_text = soup.get_text()
 
-            search_window_size = 200
-
             for person in company.persons:
+                match_emails = [[], []]
+
                 found_emails = []
                 found_phones = []
 
-                for match in re.finditer(re.escape(person.name), page_text, re.IGNORECASE):
-                    start, end = match.span()
+                all_emails = re.findall(EMAIL_REGEX, page_text)
+                all_phones = re.findall(PHONE_REGEX, page_text)
 
-                    search_start = max(0, start - search_window_size)
-                    search_end = min(len(page_text), end + search_window_size)
+                first_name = person.name.split(" ")[0].lower()
 
-                    search_area = page_text[search_start:search_end]
+                if len(person.name.split(" ")) > 1:
+                    last_name = person.name.split(" ")[1].lower()
+                else:
+                    last_name = " "
 
-                    emails_in_area = re.findall(EMAIL_REGEX, search_area)
-                    phones_in_area = re.findall(PHONE_REGEX, search_area)
+                for a in soup.find_all("a", href=True):
+                    href = a.get("href", None)
 
-                    found_emails.extend(emails_in_area)
-                    found_phones.extend(phones_in_area)
+                    if href:
+                        if href.startswith("mailto:"):
+                            email = href[len("mailto:"):]
+                            all_emails.append(email)
+
+                for email in all_emails:
+                    if not last_name or len(last_name) > 1 and "." not in last_name:
+                        if email and (first_name in email.lower() or last_name in email.lower()):
+                            found_emails.append(email)
+
+                for phone in all_phones:
+                    found_phones.append(phone)
 
                 unique_emails = list(set(found_emails))
                 unique_phones = list(set(found_phones))
 
                 if unique_emails:
-                    email = unique_emails[0].split(".")
+                    for email in unique_emails:
+                        emails = [_person.email for _person in company.persons]
+                        email_parts = email.split(".")
 
-                    if "com" in email[-1] and len(email[-1]) != 3:
-                        email[-1] = "com"
+                        if "com" in email_parts[-1] and len(email_parts[-1]) != 3:
+                            email_parts[-1] = "com"
 
-                    person.email = ".".join(email)
+                        if "area" in email_parts:
+                            email_parts.remove("area")
+
+                        new_email = ".".join(email_parts)
+
+                        if new_email not in emails:
+                            match_count = -1
+
+                            if first_name in new_email.lower():
+                                match_count += 1
+
+                            if last_name in new_email.lower():
+                                match_count += 1
+
+                            if match_count > -1:
+                                match_emails[match_count].append(new_email)
 
                 if unique_phones:
-                    person.phone_number = unique_phones[0]
+                    numbers = [_person.phone_number for _person in company.persons]
+
+                    if unique_phones[0] not in numbers:
+                        person.phone_number = unique_phones[0]
+
+                if match_emails[1]:
+                    person.email = match_emails[1][0]
+                elif match_emails[0]:
+                    person.email = match_emails[0][0]
 
     return company
 
